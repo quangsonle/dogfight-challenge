@@ -80,7 +80,7 @@ async function wakeAndCheckHealth() {
 
 async function ensureWeightsLoaded() {
   if (rlWeights) return;
-  const res = await fetch("rl_weights.json?v=4");
+  const res = await fetch("rl_weights.json?v=5");
   if (!res.ok) throw new Error("Failed to load neural weights file.");
   rlWeights = await res.json();
 }
