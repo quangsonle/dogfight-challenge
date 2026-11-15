@@ -1,7 +1,8 @@
 // =====================================================================
-// CONFIGURATION (Update API_BASE_URL after deploying Render!)
+// CONFIGURATION: REPLACE WITH YOUR LIVE RENDER HTTPS URL (NO TRAILING SLASH!)
 // =====================================================================
-const API_BASE_URL = "https://dogfight-challenge.onrender.com"; // Replace with e.g. "https://dogfight-api.onrender.com"
+const RAW_API_URL = "https://YOUR-RENDER-SERVICE.onrender.com";
+const API_BASE_URL = RAW_API_URL.replace(/\/+$/, "");
 
 // =====================================================================
 // EXACT AERODYNAMIC CONSTANTS (1:1 MATCH WITH dogfight_core.py)
@@ -55,18 +56,44 @@ function encodeAction(turn, thr, fire) {
 }
 
 // =====================================================================
-// AUTHENTICATION & SECURE WEIGHTS LOADING
+// AUTHENTICATION, SERVER PRE-WARM & WEIGHT LOADING (ZERO PREFLIGHT)
 // =====================================================================
 let authToken = "";
 let rlWeights = null;
 
-function onUnlocked(token, weights) {
-  authToken = token;
-  rlWeights = weights;
+async function wakeAndCheckHealth() {
+  const healthEl = document.getElementById("serverHealth");
   try {
-    sessionStorage.setItem("df_token", token);
-    sessionStorage.setItem("df_weights", JSON.stringify(weights));
-  } catch {}
+    const res = await fetch(`${API_BASE_URL}/health`);
+    if (res.ok) {
+      healthEl.style.color = "#6ee7b7";
+      healthEl.textContent = "Verification server online";
+    } else {
+      healthEl.style.color = "#fbbf24";
+      healthEl.textContent = `Server waking (${res.status})...`;
+    }
+  } catch (err) {
+    healthEl.style.color = "#f87171";
+    healthEl.textContent = `Cannot reach server (${API_BASE_URL})`;
+  }
+}
+
+async function ensureWeightsLoaded() {
+  if (rlWeights) return;
+  const res = await fetch("rl_weights.json?v=4");
+  if (!res.ok) throw new Error("Failed to load neural weights file.");
+  rlWeights = await res.json();
+}
+
+async function onUnlocked(token) {
+  authToken = token;
+  const status = document.getElementById("authStatus");
+  status.style.color = "#fbbf24";
+  status.textContent = "Loading 54M-step neural weights...";
+
+  await ensureWeightsLoaded();
+  try { sessionStorage.setItem("df_token", token); } catch {}
+
   document.getElementById("authOverlay").classList.add("hidden");
   document.getElementById("menuOverlay").classList.remove("hidden");
   fetchLeaderboard();
@@ -74,7 +101,7 @@ function onUnlocked(token, weights) {
 
 function forceRelock(message) {
   authToken = "";
-  try { sessionStorage.removeItem("df_token"); sessionStorage.removeItem("df_weights"); } catch {}
+  try { sessionStorage.removeItem("df_token"); } catch {}
   appState = "LOCKED";
   document.getElementById("menuOverlay").classList.add("hidden");
   document.getElementById("gameOverOverlay").classList.add("hidden");
@@ -90,20 +117,31 @@ document.getElementById("authForm").addEventListener("submit", async (e) => {
   const pw = document.getElementById("passcodeInput").value;
   btn.disabled = true;
   status.style.color = "#fbbf24";
-  status.textContent = "Verifying passcode (server may take ~30s on cold start)...";
+  status.textContent = "Verifying passcode...";
 
   try {
-    const res = await fetch(`${API_BASE_URL}/unlock`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pw })
-    });
+    let res = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        // Content-Type: text/plain avoids CORS OPTIONS preflight completely!
+        res = await fetch(`${API_BASE_URL}/unlock`, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ password: pw })
+        });
+        break;
+      } catch (netErr) {
+        if (attempt === 3) throw netErr;
+        status.textContent = `Waking server, retrying (${attempt + 1}/3)...`;
+        await new Promise(r => setTimeout(r, 4000));
+      }
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Access denied");
-    onUnlocked(data.token, data.weights);
+    await onUnlocked(data.token);
   } catch (err) {
     status.style.color = "#f87171";
-    status.textContent = err.message;
+    status.textContent = `${err.message} (${API_BASE_URL})`;
   } finally {
     btn.disabled = false;
   }
@@ -388,11 +426,9 @@ let targetsHit = 0, shotsFired = 0, roundSteps = 0;
 let p1ActionLog = "", p2ActionLog = "";
 let lastMatchResult = null;
 
-// Desktop Inputs
 const keys = {};
 let mouseX = 600, mouseY = 350, mouseLeft = false, mouseRight = false;
 
-// Mobile Multi-Touch 2-Thumb Virtual Stick State
 let isUsingTouch = false;
 let lastTouchTime = 0;
 let stickTouchId = null, stickOrigX = 0, stickOrigY = 0, stickCurrX = 0, stickCurrY = 0;
@@ -459,12 +495,12 @@ function stepSimulation() {
   if (isUsingTouch) {
     if (stickTouchId !== null) {
       const sdx = stickCurrX - stickOrigX;
-      const sdy = stickOrigY - stickCurrY; // +Y is UP in physics
+      const sdy = stickOrigY - stickCurrY;
       const sdist = Math.hypot(sdx, sdy);
       if (sdist > 14) {
         const err = wrapAngle(Math.atan2(sdy, sdx) - p1.angle);
         p1Turn = err > 0.06 ? 1 : (err < -0.06 ? -1 : 0);
-        p1Thr = sdist >= 38 ? 1 : 0; // Inner ring = Coast turn; Outer ring = Afterburner
+        p1Thr = sdist >= 38 ? 1 : 0;
       }
     }
     p1Fire = touchFire ? 1 : 0;
@@ -562,9 +598,6 @@ function finishMatch() {
   document.getElementById("gameOverOverlay").classList.remove("hidden");
 }
 
-// =====================================================================
-// RENDERING
-// =====================================================================
 function render() {
   ctx.fillStyle = "#121620";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -624,7 +657,6 @@ function render() {
   drawHud(p1, 20, false, gameMode === 1);
   if (p2) drawHud(p2, WIDTH - 20, true, false);
 
-  // Render 2-Thumb Virtual Joystick + Fire Zone on Mobile Touch
   if (isUsingTouch && appState === "PLAY") {
     drawMobileTouchOverlay();
   }
@@ -641,7 +673,6 @@ function render() {
 }
 
 function drawMobileTouchOverlay() {
-  // Left Virtual Stick
   const sx = stickTouchId !== null ? stickOrigX : 140;
   const sy = stickTouchId !== null ? stickOrigY : HEIGHT - 135;
   const kx = stickTouchId !== null ? stickCurrX : sx;
@@ -649,17 +680,14 @@ function drawMobileTouchOverlay() {
   const sdist = Math.hypot(kx - sx, ky - sy);
   const boosting = stickTouchId !== null && sdist >= 38;
 
-  // Outer Boost Ring
   ctx.strokeStyle = boosting ? "rgba(255, 165, 40, 0.75)" : "rgba(120, 200, 255, 0.35)";
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(sx, sy, 82, 0, Math.PI * 2); ctx.stroke();
 
-  // Inner Coast Ring
   ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(sx, sy, 38, 0, Math.PI * 2); ctx.stroke();
 
-  // Stick Knob (clamped visually to outer ring)
   let dx = kx - sx, dy = ky - sy;
   if (sdist > 82) { dx = (dx / sdist) * 82; dy = (dy / sdist) * 82; }
   ctx.fillStyle = boosting ? "rgba(255, 165, 40, 0.7)" : "rgba(100, 200, 255, 0.6)";
@@ -670,7 +698,6 @@ function drawMobileTouchOverlay() {
   ctx.textAlign = "center";
   ctx.fillText(boosting ? "BOOST ON" : "STEER / BOOST", sx, sy + 102);
 
-  // Right Fire Pad
   const fx = WIDTH - 130, fy = HEIGHT - 135;
   ctx.fillStyle = touchFire ? "rgba(239, 68, 68, 0.55)" : "rgba(239, 68, 68, 0.22)";
   ctx.strokeStyle = touchFire ? "rgba(255, 120, 120, 0.9)" : "rgba(255, 120, 120, 0.45)";
@@ -745,7 +772,7 @@ function drawHud(jet, xPos, alignRight, isTraining) {
 }
 
 // =====================================================================
-// INPUTS (MOUSE + KEYBOARD + MULTI-TOUCH 2-THUMB VIRTUAL STICK)
+// INPUTS
 // =====================================================================
 function toCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -848,9 +875,7 @@ async function fetchLeaderboard() {
   if (!authToken) return;
   const listEl = document.getElementById("leaderboardList");
   try {
-    const res = await fetch(`${API_BASE_URL}/leaderboard`, {
-      headers: { "X-Auth-Token": authToken }
-    });
+    const res = await fetch(`${API_BASE_URL}/leaderboard?token=${encodeURIComponent(authToken)}`);
     if (res.status === 401) { forceRelock("Session expired. Re-enter passcode."); return; }
     const data = await res.json();
     if (!data.entries || data.entries.length === 0) {
@@ -883,8 +908,9 @@ document.getElementById("submitForm").addEventListener("submit", async (e) => {
   try {
     const res = await fetch(`${API_BASE_URL}/submit`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Auth-Token": authToken },
+      headers: { "Content-Type": "text/plain" },
       body: JSON.stringify({
+        token: authToken,
         name: document.getElementById("playerName").value.trim(),
         linkedin_url: document.getElementById("linkedinUrl").value.trim(),
         p1_actions: p1ActionLog,
@@ -908,9 +934,6 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[m]));
 }
 
-// =====================================================================
-// FIXED 60HZ MAIN LOOP
-// =====================================================================
 const FIXED_DT = 1000 / 60;
 let accumulator = 0, lastTime = performance.now();
 
@@ -927,9 +950,9 @@ function loop(now) {
 }
 
 checkOrientation();
+wakeAndCheckHealth();
 try {
   const savedToken = sessionStorage.getItem("df_token");
-  const savedWeights = sessionStorage.getItem("df_weights");
-  if (savedToken && savedWeights) onUnlocked(savedToken, JSON.parse(savedWeights));
+  if (savedToken) onUnlocked(savedToken).catch(() => forceRelock("Session expired. Re-enter passcode."));
 } catch {}
 requestAnimationFrame(loop);

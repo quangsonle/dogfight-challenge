@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>AlphaDogfight 2D — Beat the 54M-Step Self-Play RL Pilot</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
   <div class="app-shell">
@@ -42,6 +42,7 @@
       <span class="badge">RESTRICTED AIRSPACE</span>
       <h2 style="margin-top:8px;">Enter Pilot Passcode</h2>
       <p class="subtitle">Access the 54M-Step Self-Play RL Combat Arena</p>
+      <div id="serverHealth" class="status-msg" style="margin-bottom:8px;">Checking verification server...</div>
       <form id="authForm" class="submit-form">
         <input type="password" id="passcodeInput" placeholder="Passcode" autocomplete="off" required />
         <button type="submit" id="btnUnlock" class="btn-primary">Unlock Arena</button>
@@ -112,6 +113,6 @@
     </div>
   </div>
 
-  <script src="game.js"></script>
+  <script src="game.js?v=4"></script>
 </body>
 </html>
