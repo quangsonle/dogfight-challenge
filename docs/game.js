@@ -1,7 +1,7 @@
 // =====================================================================
 // CONFIGURATION (Update API_BASE_URL after deploying Render!)
 // =====================================================================
-const API_BASE_URL ="https://dogfight-challenge.onrender.com" // "http://localhost:8000"; // Replace with e.g. "https://dogfight-api.onrender.com"
+const API_BASE_URL = "http://localhost:8000"; // Replace with e.g. "https://dogfight-api.onrender.com"
 
 // =====================================================================
 // EXACT AERODYNAMIC CONSTANTS (1:1 MATCH WITH dogfight_core.py)
@@ -113,13 +113,11 @@ document.getElementById("authForm").addEventListener("submit", async (e) => {
 // MOBILE ORIENTATION GUARD
 // =====================================================================
 function checkOrientation() {
-  const isTouch = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
+  const isTouchDevice = ("ontouchstart" in window) || navigator.maxTouchPoints > 0;
   const isPortrait = window.innerHeight > window.innerWidth;
   const rotEl = document.getElementById("rotateOverlay");
-  const touchEl = document.getElementById("mobileControls");
 
-  if (isTouch) touchEl.classList.remove("hidden");
-  if (isTouch && isPortrait && window.innerWidth < 900) {
+  if (isTouchDevice && isPortrait && window.innerWidth < 900) {
     rotEl.classList.remove("hidden");
   } else {
     rotEl.classList.add("hidden");
@@ -379,7 +377,7 @@ function spawnBurst(x, y, particles, rgbaPrefix, count) {
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-let appState = "LOCKED"; // LOCKED, MENU, PLAY, GAMEOVER
+let appState = "LOCKED";
 let gameMode = 3;
 let waitingLaunch = true;
 let mouseSteering = true;
@@ -390,9 +388,15 @@ let targetsHit = 0, shotsFired = 0, roundSteps = 0;
 let p1ActionLog = "", p2ActionLog = "";
 let lastMatchResult = null;
 
+// Desktop Inputs
 const keys = {};
 let mouseX = 600, mouseY = 350, mouseLeft = false, mouseRight = false;
-let touchFire = false, touchThrust = false;
+
+// Mobile Multi-Touch 2-Thumb Virtual Stick State
+let isUsingTouch = false;
+let lastTouchTime = 0;
+let stickTouchId = null, stickOrigX = 0, stickOrigY = 0, stickCurrX = 0, stickCurrY = 0;
+let fireTouchId = null, touchFire = false;
 
 function respawnTarget() {
   for (let i = 0; i < 50; i++) {
@@ -414,8 +418,8 @@ function startMatch(mode) {
   bullets = []; particles = [];
   targetsHit = 0; shotsFired = 0; roundSteps = 0;
   p1ActionLog = ""; p2ActionLog = "";
+  stickTouchId = null; fireTouchId = null; touchFire = false;
 
-  // Vertical Scramble Spawn (exact match with dogfight.py & backend)
   p1 = new Jet(380, 220, Math.PI * 0.5, "#3498db", "YOU (BLUE)");
   if (mode === 1) {
     p2 = null;
@@ -433,6 +437,7 @@ function startMatch(mode) {
 function showMenu() {
   if (!authToken) return;
   appState = "MENU";
+  stickTouchId = null; fireTouchId = null; touchFire = false;
   document.getElementById("menuOverlay").classList.remove("hidden");
   document.getElementById("gameOverOverlay").classList.add("hidden");
   document.getElementById("btnMenu").classList.add("hidden");
@@ -450,11 +455,24 @@ function stepSimulation() {
 
   roundSteps++;
   let p1Turn = 0, p1Thr = 0, p1Fire = 0;
-  if (mouseSteering) {
+
+  if (isUsingTouch) {
+    if (stickTouchId !== null) {
+      const sdx = stickCurrX - stickOrigX;
+      const sdy = stickOrigY - stickCurrY; // +Y is UP in physics
+      const sdist = Math.hypot(sdx, sdy);
+      if (sdist > 14) {
+        const err = wrapAngle(Math.atan2(sdy, sdx) - p1.angle);
+        p1Turn = err > 0.06 ? 1 : (err < -0.06 ? -1 : 0);
+        p1Thr = sdist >= 38 ? 1 : 0; // Inner ring = Coast turn; Outer ring = Afterburner
+      }
+    }
+    p1Fire = touchFire ? 1 : 0;
+  } else if (mouseSteering) {
     const err = wrapAngle(Math.atan2((HEIGHT - mouseY) - p1.y, mouseX - p1.x) - p1.angle);
     p1Turn = err > 0.06 ? 1 : (err < -0.06 ? -1 : 0);
-    p1Thr = (mouseRight || touchThrust || keys["KeyW"] || keys["ArrowUp"] || keys["ShiftLeft"]) ? 1 : 0;
-    p1Fire = (mouseLeft || touchFire || keys["Space"] || keys["KeyF"]) ? 1 : 0;
+    p1Thr = (mouseRight || keys["KeyW"] || keys["ArrowUp"] || keys["ShiftLeft"]) ? 1 : 0;
+    p1Fire = (mouseLeft || keys["Space"] || keys["KeyF"]) ? 1 : 0;
   } else {
     p1Turn = ((keys["ArrowLeft"] || keys["KeyA"]) ? 1 : 0) + ((keys["ArrowRight"] || keys["KeyD"]) ? -1 : 0);
     p1Thr = (keys["ArrowUp"] || keys["KeyW"]) ? 1 : 0;
@@ -518,6 +536,7 @@ function stepSimulation() {
 
 function finishMatch() {
   appState = "GAMEOVER";
+  stickTouchId = null; fireTouchId = null; touchFire = false;
   const dmgDealt = 100 - p2.hp;
   const durationSec = (roundSteps / 60).toFixed(1);
   const won = (p1.alive && !p2.alive) || (p1.alive && p2.alive && p1.hp > p2.hp);
@@ -594,7 +613,7 @@ function render() {
     }
   }
 
-  if (mouseSteering && appState === "PLAY") {
+  if (!isUsingTouch && mouseSteering && appState === "PLAY") {
     ctx.strokeStyle = "#78c8ff"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(mouseX, mouseY, 10, 0, Math.PI * 2); ctx.stroke();
   }
@@ -605,15 +624,62 @@ function render() {
   drawHud(p1, 20, false, gameMode === 1);
   if (p2) drawHud(p2, WIDTH - 20, true, false);
 
+  // Render 2-Thumb Virtual Joystick + Fire Zone on Mobile Touch
+  if (isUsingTouch && appState === "PLAY") {
+    drawMobileTouchOverlay();
+  }
+
   if (appState === "PLAY" && waitingLaunch) {
     ctx.fillStyle = "rgba(22, 26, 36, 0.85)";
     ctx.fillRect(WIDTH / 2 - 270, HEIGHT / 2 - 40, 540, 68);
     ctx.strokeStyle = "#ffdc50"; ctx.lineWidth = 2;
     ctx.strokeRect(WIDTH / 2 - 270, HEIGHT / 2 - 40, 540, 68);
     ctx.fillStyle = "#ffdc50"; ctx.font = "bold 20px sans-serif"; ctx.textAlign = "center";
-    ctx.fillText("CLICK, TOUCH, OR PRESS ANY KEY TO LAUNCH!", WIDTH / 2, HEIGHT / 2);
+    ctx.fillText(isUsingTouch ? "TOUCH TO LAUNCH!" : "CLICK OR PRESS ANY KEY TO LAUNCH!", WIDTH / 2, HEIGHT / 2);
     ctx.textAlign = "left";
   }
+}
+
+function drawMobileTouchOverlay() {
+  // Left Virtual Stick
+  const sx = stickTouchId !== null ? stickOrigX : 140;
+  const sy = stickTouchId !== null ? stickOrigY : HEIGHT - 135;
+  const kx = stickTouchId !== null ? stickCurrX : sx;
+  const ky = stickTouchId !== null ? stickCurrY : sy;
+  const sdist = Math.hypot(kx - sx, ky - sy);
+  const boosting = stickTouchId !== null && sdist >= 38;
+
+  // Outer Boost Ring
+  ctx.strokeStyle = boosting ? "rgba(255, 165, 40, 0.75)" : "rgba(120, 200, 255, 0.35)";
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(sx, sy, 82, 0, Math.PI * 2); ctx.stroke();
+
+  // Inner Coast Ring
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(sx, sy, 38, 0, Math.PI * 2); ctx.stroke();
+
+  // Stick Knob (clamped visually to outer ring)
+  let dx = kx - sx, dy = ky - sy;
+  if (sdist > 82) { dx = (dx / sdist) * 82; dy = (dy / sdist) * 82; }
+  ctx.fillStyle = boosting ? "rgba(255, 165, 40, 0.7)" : "rgba(100, 200, 255, 0.6)";
+  ctx.beginPath(); ctx.arc(sx + dx, sy + dy, 26, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.font = "bold 13px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(boosting ? "BOOST ON" : "STEER / BOOST", sx, sy + 102);
+
+  // Right Fire Pad
+  const fx = WIDTH - 130, fy = HEIGHT - 135;
+  ctx.fillStyle = touchFire ? "rgba(239, 68, 68, 0.55)" : "rgba(239, 68, 68, 0.22)";
+  ctx.strokeStyle = touchFire ? "rgba(255, 120, 120, 0.9)" : "rgba(255, 120, 120, 0.45)";
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(fx, fy, 64, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 16px sans-serif";
+  ctx.fillText("FIRE", fx, fy + 6);
+  ctx.textAlign = "left";
 }
 
 function drawJet(jet, showGuides) {
@@ -679,18 +745,24 @@ function drawHud(jet, xPos, alignRight, isTraining) {
 }
 
 // =====================================================================
-// INPUTS & MOBILE SUPPORT
+// INPUTS (MOUSE + KEYBOARD + MULTI-TOUCH 2-THUMB VIRTUAL STICK)
 // =====================================================================
-function updateCanvasCoords(clientX, clientY) {
+function toCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  mouseX = (clientX - rect.left) * (WIDTH / rect.width);
-  mouseY = (clientY - rect.top) * (HEIGHT / rect.height);
+  return [
+    (clientX - rect.left) * (WIDTH / rect.width),
+    (clientY - rect.top) * (HEIGHT / rect.height)
+  ];
 }
 
 canvas.addEventListener("contextmenu", e => e.preventDefault());
-canvas.addEventListener("mousemove", e => updateCanvasCoords(e.clientX, e.clientY));
+canvas.addEventListener("mousemove", e => {
+  if (performance.now() - lastTouchTime > 500) isUsingTouch = false;
+  [mouseX, mouseY] = toCanvasCoords(e.clientX, e.clientY);
+});
 canvas.addEventListener("mousedown", e => {
-  updateCanvasCoords(e.clientX, e.clientY);
+  if (performance.now() - lastTouchTime > 500) isUsingTouch = false;
+  [mouseX, mouseY] = toCanvasCoords(e.clientX, e.clientY);
   if (e.button === 0) mouseLeft = true;
   if (e.button === 2) mouseRight = true;
   if (appState === "PLAY" && waitingLaunch) waitingLaunch = false;
@@ -702,20 +774,42 @@ window.addEventListener("mouseup", e => {
 
 canvas.addEventListener("touchstart", e => {
   e.preventDefault();
-  updateCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+  isUsingTouch = true;
+  lastTouchTime = performance.now();
   if (appState === "PLAY" && waitingLaunch) waitingLaunch = false;
-}, { passive: false });
-canvas.addEventListener("touchmove", e => {
-  e.preventDefault();
-  updateCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+
+  for (const t of e.changedTouches) {
+    const [cx, cy] = toCanvasCoords(t.clientX, t.clientY);
+    if (cx < WIDTH * 0.5 && stickTouchId === null) {
+      stickTouchId = t.identifier;
+      stickOrigX = cx; stickOrigY = cy;
+      stickCurrX = cx; stickCurrY = cy;
+    } else if (cx >= WIDTH * 0.5 && fireTouchId === null) {
+      fireTouchId = t.identifier;
+      touchFire = true;
+    }
+  }
 }, { passive: false });
 
-const btnTouchFire = document.getElementById("btnTouchFire");
-const btnTouchThrust = document.getElementById("btnTouchThrust");
-btnTouchFire.addEventListener("touchstart", e => { e.preventDefault(); touchFire = true; if (appState === "PLAY") waitingLaunch = false; }, { passive: false });
-btnTouchFire.addEventListener("touchend", () => touchFire = false);
-btnTouchThrust.addEventListener("touchstart", e => { e.preventDefault(); touchThrust = true; if (appState === "PLAY") waitingLaunch = false; }, { passive: false });
-btnTouchThrust.addEventListener("touchend", () => touchThrust = false);
+canvas.addEventListener("touchmove", e => {
+  e.preventDefault();
+  lastTouchTime = performance.now();
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickTouchId) {
+      [stickCurrX, stickCurrY] = toCanvasCoords(t.clientX, t.clientY);
+    }
+  }
+}, { passive: false });
+
+function handleTouchRelease(e) {
+  lastTouchTime = performance.now();
+  for (const t of e.changedTouches) {
+    if (t.identifier === stickTouchId) stickTouchId = null;
+    if (t.identifier === fireTouchId) { fireTouchId = null; touchFire = false; }
+  }
+}
+canvas.addEventListener("touchend", handleTouchRelease);
+canvas.addEventListener("touchcancel", handleTouchRelease);
 
 window.addEventListener("keydown", e => {
   if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code) && appState === "PLAY") e.preventDefault();
