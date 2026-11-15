@@ -1,7 +1,7 @@
 // =====================================================================
 // CONFIGURATION (Update API_BASE_URL after deploying Render!)
 // =====================================================================
-const API_BASE_URL = "http://localhost:8000"; // Replace with e.g. "https://dogfight-api.onrender.com"
+const API_BASE_URL = "https://dogfight-challenge.onrender.com"; // Replace with e.g. "https://dogfight-api.onrender.com"
 
 // =====================================================================
 // EXACT AERODYNAMIC CONSTANTS (1:1 MATCH WITH dogfight_core.py)
