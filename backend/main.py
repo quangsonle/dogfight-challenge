@@ -23,10 +23,10 @@ MAX_STEPS = 2400
 GAME_PASSWORD = os.getenv("GAME_PASSWORD", "pilot2026")
 AUTH_SECRET = os.getenv("AUTH_SECRET") or hashlib.sha256(f"{GAME_PASSWORD}:df_secret_v1".encode()).hexdigest()
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")          # e.g. "yourname/dogfight-challenge"
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
-GITHUB_FILE_PATH = os.getenv("GITHUB_FILE_PATH", "data/leaderboard.json")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+GITHUB_REPO = os.getenv("GITHUB_REPO", "").replace("https://github.com/", "").strip().strip("/")
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
+GITHUB_FILE_PATH = os.getenv("GITHUB_FILE_PATH", "data/leaderboard.json").strip().lstrip("/")
 LOCAL_FALLBACK = "local_leaderboard.json"
 
 app = FastAPI(title="AlphaDogfight 2D Web Backend")
@@ -46,6 +46,7 @@ WEIGHTS_PAYLOAD = {
 
 lb_lock = asyncio.Lock()
 leaderboard_cache = []
+last_github_status = "not_synced_yet"
 
 # =====================================================================
 # RATE LIMITING & AUTH HELPERS
@@ -73,7 +74,6 @@ def check_rate_limit(key: str, max_calls: int, window_sec: int, min_cooldown_sec
     history.append(now)
     rate_buckets[key] = history
 
-    # Bound memory over weeks of uptime
     if len(rate_buckets) > 1000:
         stale = [k for k, v in rate_buckets.items() if not v or (now - v[-1]) > 600]
         for k in stale:
@@ -122,7 +122,6 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
     if len(p1_actions) != len(p2_actions) or len(p1_actions) > MAX_STEPS:
         raise HTTPException(status_code=400, detail="Invalid action log length.")
 
-    # Exact Vertical Scramble Spawn matching dogfight.py
     p1 = Jet(380.0, 220.0, math.pi * 0.5, (52, 152, 219), "PLAYER")
     p2 = Jet(820.0, 220.0, math.pi * 0.5, (231, 76, 60), "RL")
     bullets = []
@@ -133,7 +132,10 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
         t1, th1, f1 = decode_action(p1_actions[t])
         t2, th2, f2 = decode_action(p2_actions[t])
 
-        # Verify P2 matches trained Champion weights within float32/64 tolerance
+        # 1. Update P1 FIRST (matches docs/game.js execution order!)
+        p1.update(t1, th1, f1, bullets)
+
+        # 2. Verify P2 matches Champion weights after P1's move/shot
         obs = np.clip(np.array(extract_rl_obs(p2, p1, bullets), dtype=np.float32), -2.5, 2.5)
         h1 = np.tanh(obs @ rl_policy.w1 + rl_policy.b1)
         h2 = np.tanh(h1 @ rl_policy.w2 + rl_policy.b2)
@@ -141,12 +143,12 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
         l_turn, l_thr, l_fire = logits[0:3], logits[3:5], logits[5:7]
 
         if (np.max(l_turn) - l_turn[t2 + 1] > 0.25) or (np.max(l_thr) - l_thr[th2] > 0.25) or (np.max(l_fire) - l_fire[f2] > 0.25):
-            raise HTTPException(status_code=400, detail="Anti-cheat: AI divergence detected.")
+            raise HTTPException(status_code=400, detail=f"Anti-cheat: AI divergence at step {t}.")
 
         if int(np.argmax(l_turn)) == (t2 + 1) and int(np.argmax(l_thr)) == th2 and int(np.argmax(l_fire)) == f2:
             exact_matches += 1
 
-        p1.update(t1, th1, f1, bullets)
+        # 3. Update P2
         p2.update(t2, th2, f2, bullets)
 
         surviving = []
@@ -188,38 +190,62 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
 # PERSISTENCE (GITHUB CONTENTS API OR LOCAL FALLBACK)
 # =====================================================================
 async def load_leaderboard():
-    global leaderboard_cache
+    global leaderboard_cache, last_github_status
     if GITHUB_TOKEN and GITHUB_REPO:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}?ref={GITHUB_BRANCH}"
         headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url, headers=headers)
-            if r.status_code == 200:
-                leaderboard_cache = json.loads(base64.b64decode(r.json()["content"]).decode("utf-8"))
-                return
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(url, headers=headers)
+                if r.status_code == 200:
+                    leaderboard_cache = json.loads(base64.b64decode(r.json()["content"]).decode("utf-8"))
+                    last_github_status = f"loaded_{len(leaderboard_cache)}_entries"
+                    print(f"[GITHUB LOAD] Loaded {len(leaderboard_cache)} entries from {GITHUB_REPO}/{GITHUB_FILE_PATH}")
+                    return
+                elif r.status_code == 404:
+                    last_github_status = "ready_file_will_be_created_on_first_submit"
+                    print(f"[GITHUB LOAD] 404 (expected if {GITHUB_FILE_PATH} does not exist yet).")
+                    return
+                else:
+                    last_github_status = f"load_error_{r.status_code}: {r.text[:160]}"
+                    print(f"[GITHUB LOAD ERROR] {last_github_status}")
+        except Exception as exc:
+            last_github_status = f"load_exception: {exc}"
+            print(f"[GITHUB LOAD EXCEPTION] {exc}")
+
     if os.path.exists(LOCAL_FALLBACK):
         with open(LOCAL_FALLBACK, "r") as f:
             leaderboard_cache = json.load(f)
 
 async def save_leaderboard():
+    global last_github_status
     payload_str = json.dumps(leaderboard_cache, indent=2)
     if GITHUB_TOKEN and GITHUB_REPO:
         base_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE_PATH}"
         headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            for _ in range(2):
-                r_get = await client.get(f"{base_url}?ref={GITHUB_BRANCH}", headers=headers)
-                sha = r_get.json()["sha"] if r_get.status_code == 200 else None
-                body = {
-                    "message": "Update verified dogfight leaderboard",
-                    "content": base64.b64encode(payload_str.encode("utf-8")).decode("utf-8"),
-                    "branch": GITHUB_BRANCH,
-                }
-                if sha:
-                    body["sha"] = sha
-                r_put = await client.put(base_url, headers=headers, json=body)
-                if r_put.status_code in (200, 201):
-                    return
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                for _ in range(2):
+                    r_get = await client.get(f"{base_url}?ref={GITHUB_BRANCH}", headers=headers)
+                    sha = r_get.json()["sha"] if r_get.status_code == 200 else None
+                    body = {
+                        "message": "Update verified dogfight leaderboard",
+                        "content": base64.b64encode(payload_str.encode("utf-8")).decode("utf-8"),
+                        "branch": GITHUB_BRANCH,
+                    }
+                    if sha:
+                        body["sha"] = sha
+                    r_put = await client.put(base_url, headers=headers, json=body)
+                    if r_put.status_code in (200, 201):
+                        last_github_status = f"saved_ok_{r_put.status_code}"
+                        print(f"[GITHUB SAVE] Success ({r_put.status_code})")
+                        return
+                    last_github_status = f"save_error_{r_put.status_code}: {r_put.text[:160]}"
+                    print(f"[GITHUB SAVE ERROR] {last_github_status}")
+        except Exception as exc:
+            last_github_status = f"save_exception: {exc}"
+            print(f"[GITHUB SAVE EXCEPTION] {exc}")
+
     with open(LOCAL_FALLBACK, "w") as f:
         f.write(payload_str)
 
@@ -229,7 +255,15 @@ async def on_startup():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "github_configured": bool(GITHUB_TOKEN and GITHUB_REPO),
+        "github_repo": GITHUB_REPO,
+        "github_branch": GITHUB_BRANCH,
+        "github_file_path": GITHUB_FILE_PATH,
+        "cached_entries": len(leaderboard_cache),
+        "last_github_status": last_github_status,
+    }
 
 @app.post("/unlock")
 def unlock_game(payload: UnlockPayload, request: Request):
