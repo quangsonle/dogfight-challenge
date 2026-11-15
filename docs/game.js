@@ -1,7 +1,7 @@
 // =====================================================================
 // CONFIGURATION: REPLACE WITH YOUR LIVE RENDER HTTPS URL (NO TRAILING SLASH!)
 // =====================================================================
-const RAW_API_URL = "https://YOUR-RENDER-SERVICE.onrender.com";
+const RAW_API_URL = "https://dogfight-challenge.onrender.com";
 const API_BASE_URL = RAW_API_URL.replace(/\/+$/, "");
 
 // =====================================================================
