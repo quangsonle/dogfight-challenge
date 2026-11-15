@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AlphaDogfight 2D — Beat the 54M-Step Self-Play RL Pilot</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="badge">54M-STEP PPO</span>
+        <h1>2D Kinetic Dogfight Challenge</h1>
+      </div>
+      <div class="top-actions">
+        <button id="btnToggleCtrl" class="btn-secondary">Controls: Mouse Fly-By-Wire [C]</button>
+        <button id="btnMenu" class="btn-secondary hidden">Main Menu [M]</button>
+      </div>
+    </header>
+
+    <main class="arena-grid">
+      <div class="canvas-wrap">
+        <canvas id="gameCanvas" width="1200" height="700"></canvas>
+        <div id="mobileControls" class="mobile-controls hidden">
+          <button id="btnTouchThrust" class="touch-btn thrust-btn">BOOST</button>
+          <button id="btnTouchFire" class="touch-btn fire-btn">FIRE</button>
+        </div>
+      </div>
+
+      <aside class="leaderboard-panel">
+        <div class="lb-header">
+          <h3>Global Leaderboard</h3>
+          <span class="lb-sub">Verified vs. RL Champion</span>
+        </div>
+        <div id="leaderboardList" class="lb-list">
+          <div class="lb-loading">Unlock arena to load scores...</div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Password Gate Overlay -->
+  <div id="authOverlay" class="fixed-overlay">
+    <div class="modal-card">
+      <span class="badge">RESTRICTED AIRSPACE</span>
+      <h2 style="margin-top:8px;">Enter Pilot Passcode</h2>
+      <p class="subtitle">Access the 54M-Step Self-Play RL Combat Arena</p>
+      <form id="authForm" class="submit-form">
+        <input type="password" id="passcodeInput" placeholder="Passcode" autocomplete="off" required />
+        <button type="submit" id="btnUnlock" class="btn-primary">Unlock Arena</button>
+        <div id="authStatus" class="status-msg"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Mobile Portrait Guard Overlay -->
+  <div id="rotateOverlay" class="fixed-overlay hidden">
+    <div class="modal-card">
+      <div class="rotate-icon">&#x21BB;</div>
+      <h2>Rotate to Landscape</h2>
+      <p class="subtitle">
+        2D aerial dogfighting requires wide horizontal airspace. Please rotate your phone sideways to play.<br><br>
+        <strong>Tip:</strong> For best Mouse Fly-By-Wire control, open this link on a desktop/laptop browser.
+      </p>
+    </div>
+  </div>
+
+  <!-- Mode Selection Overlay -->
+  <div id="menuOverlay" class="fixed-overlay hidden">
+    <div class="modal-card">
+      <h2>Select Combat Mode</h2>
+      <p class="subtitle">Physics: Gravity, Induced Drag, Stall Dynamics &amp; Ballistic Lead</p>
+
+      <div class="mode-list">
+        <button class="mode-btn mode-green" data-mode="1">
+          <div class="mode-title">1. Flight School (Target Practice)</div>
+          <div class="mode-desc">Warm up with safe auto-bounce ground, aiming sightline, and respawning targets.</div>
+        </button>
+        <button class="mode-btn mode-blue" data-mode="2">
+          <div class="mode-title">2. Warm-Up: vs. Hard Rule-Based AI</div>
+          <div class="mode-desc">Classical lead-pursuit &amp; break-turn bot (the RL Champion beats it 100%).</div>
+        </button>
+        <button class="mode-btn mode-red" data-mode="3">
+          <div class="mode-title">3. BOSS CHALLENGE: vs. Self-Play RL Champion</div>
+          <div class="mode-desc">54M-step Neural Network (sweeps all scripted bots 24/24). Ranked on Global Leaderboard!</div>
+        </button>
+      </div>
+
+      <div class="controls-box">
+        <strong>Desktop:</strong> Point Mouse to Steer &bull; Left-Click / <code>SPACE</code> = Fire &bull; Right-Click / <code>W</code> = Afterburner<br />
+        <strong>Mobile (Landscape):</strong> Drag sky to steer &bull; Hold BOOST / FIRE thumb buttons
+      </div>
+    </div>
+  </div>
+
+  <!-- Post-Game Result & Submit Modal -->
+  <div id="gameOverOverlay" class="fixed-overlay hidden">
+    <div class="modal-card">
+      <h2 id="resultHeadline">MATCH OVER</h2>
+      <p id="resultStats" class="stats-line"></p>
+      <div id="scoreDisplay" class="score-pill">Score: 0</div>
+
+      <form id="submitForm" class="submit-form hidden">
+        <input type="text" id="playerName" placeholder="Your Name / Callsign" maxlength="28" required />
+        <input type="url" id="linkedinUrl" placeholder="LinkedIn Profile URL (optional)" maxlength="120" />
+        <button type="submit" id="btnSubmitScore" class="btn-primary">Verify &amp; Post to Leaderboard</button>
+        <div id="submitStatus" class="status-msg"></div>
+      </form>
+
+      <div class="modal-actions">
+        <button id="btnRematch" class="btn-primary">Play Again [R]</button>
+        <button id="btnShare" class="btn-secondary">Copy LinkedIn Share Text</button>
+        <button id="btnBackMenu" class="btn-secondary">Menu [M]</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
