@@ -1,5 +1,13 @@
 [
   {
+    "name": "quang",
+    "linkedin_url": "",
+    "won": false,
+    "score": 452,
+    "dmg_dealt": 90,
+    "hp_left": 0
+  },
+  {
     "name": "asfsdf",
     "linkedin_url": "",
     "won": false,
