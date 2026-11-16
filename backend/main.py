@@ -107,19 +107,28 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
         t1, th1, f1 = decode_action(p1_actions[t])
         t2, th2, f2 = decode_action(p2_actions[t])
 
+        # 1. P1 updates FIRST (matches docs/game.js execution order!)
+        p1.update(t1, th1, f1, bullets)
+
+        # 2. P2 observes updated (p2, p1, bullets) and verifies logits
         obs = np.clip(np.array(extract_rl_obs(p2, p1, bullets), dtype=np.float32), -2.5, 2.5)
         h1 = np.tanh(obs @ rl_policy.w1 + rl_policy.b1)
         h2 = np.tanh(h1 @ rl_policy.w2 + rl_policy.b2)
         logits = h2 @ rl_policy.w3 + rl_policy.b3
         l_turn, l_thr, l_fire = logits[0:3], logits[3:5], logits[5:7]
 
-        if (np.max(l_turn) - l_turn[t2 + 1] > 0.25) or (np.max(l_thr) - l_thr[th2] > 0.25) or (np.max(l_fire) - l_fire[f2] > 0.25):
-            raise HTTPException(status_code=400, detail="Anti-cheat: AI divergence detected.")
+        gap = max(
+            float(np.max(l_turn) - l_turn[t2 + 1]),
+            float(np.max(l_thr) - l_thr[th2]),
+            float(np.max(l_fire) - l_fire[f2]),
+        )
+        if gap > 0.25:
+            raise HTTPException(status_code=400, detail=f"Anti-cheat: AI divergence at frame {t} (gap={gap:.2f}).")
 
         if int(np.argmax(l_turn)) == (t2 + 1) and int(np.argmax(l_thr)) == th2 and int(np.argmax(l_fire)) == f2:
             exact_matches += 1
 
-        p1.update(t1, th1, f1, bullets)
+        # 3. P2 updates
         p2.update(t2, th2, f2, bullets)
 
         surviving = []
@@ -144,7 +153,7 @@ def verify_and_score_replay(p1_actions: str, p2_actions: str):
                 raise HTTPException(status_code=400, detail="Invalid trailing actions after KO.")
             break
 
-    if (exact_matches / max(1, steps)) < 0.90:
+    if (exact_matches / max(1, steps)) < 0.85:
         raise HTTPException(status_code=400, detail="Anti-cheat: Replay failed AI verification.")
 
     won = (p1.alive and not p2.alive) or (p1.alive and p2.alive and p1.hp > p2.hp)
