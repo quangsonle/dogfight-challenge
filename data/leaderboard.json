@@ -8,6 +8,14 @@
     "hp_left": 55
   },
   {
+    "name": "kale",
+    "linkedin_url": "",
+    "won": true,
+    "score": 1940,
+    "dmg_dealt": 100,
+    "hp_left": 55
+  },
+  {
     "name": "ac2",
     "linkedin_url": "",
     "won": true,
