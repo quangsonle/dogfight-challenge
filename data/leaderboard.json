@@ -32,6 +32,14 @@
     "hp_left": 40
   },
   {
+    "name": "heb4",
+    "linkedin_url": "",
+    "won": true,
+    "score": 1672,
+    "dmg_dealt": 100,
+    "hp_left": 25
+  },
+  {
     "name": "ac2",
     "linkedin_url": "",
     "won": false,
