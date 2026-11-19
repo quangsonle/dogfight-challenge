@@ -232,6 +232,14 @@
     "hp_left": 25
   },
   {
+    "name": "Fu",
+    "linkedin_url": "",
+    "won": true,
+    "score": 1536,
+    "dmg_dealt": 100,
+    "hp_left": 10
+  },
+  {
     "name": "kar1",
     "linkedin_url": "",
     "won": true,
