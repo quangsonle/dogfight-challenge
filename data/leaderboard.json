@@ -1,5 +1,13 @@
 [
   {
+    "name": "ASS",
+    "linkedin_url": "",
+    "won": true,
+    "score": 2256,
+    "dmg_dealt": 100,
+    "hp_left": 85
+  },
+  {
     "name": "quangl",
     "linkedin_url": "",
     "won": true,
